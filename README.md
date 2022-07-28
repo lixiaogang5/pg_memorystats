@@ -67,9 +67,151 @@ void StartupXLOG(void)
 （5）fsync()同步整个数据目录（PGDATA路径下所有目录和文件）  
 
 
+## 2.1 检查pg_contrl文件中checkPoint内容有效性
+下面列出的代码部分是StartupXLOG()函数中对于上面提到的五个功能点的代码逻辑实现：
+
+```c
+void
+StartupXLOG(void)
+{
+	XLogCtlInsert *Insert;
+	CheckPoint	checkPoint;
+	bool		wasShutdown;
+	bool		reachedRecoveryTarget 	= false;
+	bool		haveBackupLabel 		= false;
+	bool		haveTblspcMap 			= false;
+	XLogRecPtr	RecPtr,
+				checkPointLoc,
+				EndOfLog;
+	TimeLineID	EndOfLogTLI;
+	TimeLineID	PrevTimeLineID;
+	XLogRecord *record;
+	TransactionId oldestActiveXID;
+	bool		backupEndRequired = false;
+	bool		backupFromStandby = false;
+	DBState		dbstate_at_startup;
+	XLogReaderState *xlogreader;
+	XLogPageReadPrivate private;
+	bool		fast_promoted = false;
+	struct stat st;
+
+	// 我们应该有一个辅助进程资源所有者来使用，并且我们不应该处于安装了其他资源所有者的事务中。
+	Assert(AuxProcessResourceOwner != NULL);
+	Assert(CurrentResourceOwner == NULL ||
+		   CurrentResourceOwner == AuxProcessResourceOwner);
+	CurrentResourceOwner = AuxProcessResourceOwner;
+
+	/*
+	 * Check that contents look valid.
+	 检查内容是否有效。
+	 */
+	if (!XRecOffIsValid(ControlFile->checkPoint))
+		ereport(FATAL,
+				(errmsg("control file contains invalid checkpoint location")));
+
+	switch (ControlFile->state)
+	{
+		case DB_SHUTDOWNED:
+
+			/*
+			 * This is the expected case, so don't be chatty in standalone
+			 * mode
+			 */
+			ereport(IsPostmasterEnvironment ? LOG : NOTICE,
+					(errmsg("database system was shut down at %s",
+							str_time(ControlFile->time))));
+			break;
+
+		case DB_SHUTDOWNED_IN_RECOVERY:
+			ereport(LOG,
+					(errmsg("database system was shut down in recovery at %s",
+							str_time(ControlFile->time))));
+			break;
+
+		case DB_SHUTDOWNING:
+			ereport(LOG,
+					(errmsg("database system shutdown was interrupted; last known up at %s",
+							str_time(ControlFile->time))));
+			break;
+
+		case DB_IN_CRASH_RECOVERY:
+			ereport(LOG,
+					(errmsg("database system was interrupted while in recovery at %s",
+							str_time(ControlFile->time)),
+					 errhint("This probably means that some data is corrupted and"
+							 " you will have to use the last backup for recovery.")));
+			break;
+
+		case DB_IN_ARCHIVE_RECOVERY:
+			ereport(LOG,
+					(errmsg("database system was interrupted while in recovery at log time %s",
+							str_time(ControlFile->checkPointCopy.time)),
+					 errhint("If this has occurred more than once some data might be corrupted"
+							 " and you might need to choose an earlier recovery target.")));
+			break;
+
+		case DB_IN_PRODUCTION:
+			ereport(LOG,
+					(errmsg("database system was interrupted; last known up at %s",
+							str_time(ControlFile->time))));
+			break;
+
+		default:
+			ereport(FATAL,
+					(errmsg("control file contains invalid database cluster state")));
+	}
+
+	/* This is just to allow attaching to startup process with a debugger */
+#ifdef XLOG_REPLAY_DELAY
+	if (ControlFile->state != DB_SHUTDOWNED)
+		pg_usleep(60000000L);
+#endif
+
+	/*
+	 * Verify that pg_wal and pg_wal/archive_status exist.  In cases where
+	 * someone has performed a copy for PITR, these directories may have been
+	 * excluded and need to be re-created.
+	 请验证pg_wal和pg_wal/archive_status是否存在。如果有人为PITR执行了复制，
+	 这些目录可能已被排除，需要重新创建。
+	 */
+	ValidateXLOGDirectoryStructure();
 
 
 
+	/*----------
+	 * If we previously crashed, perform a couple of actions:
+	 如果我们之前崩溃了，执行以下几个动作:
+	 *
+	 * - The pg_wal directory may still include some temporary WAL segments
+	 *   used when creating a new segment, so perform some clean up to not
+	 *   bloat this path.  This is done first as there is no point to sync
+	 *   this temporary data.
+	 pg_wal目录可能仍然包含一些创建新段时使用的临时WAL段，因此执行一些清理操作以避免该路径膨胀。
+	 首先执行这个操作，因为没有必要同步此临时数据。
+	 *
+	 * - There might be data which we had written, intending to fsync it, but
+	 *   which we had not actually fsync'd yet.  Therefore, a power failure in
+	 *   the near future might cause earlier unflushed writes to be lost, even
+	 *   though more recent data written to disk from here on would be
+	 *   persisted.  To avoid that, fsync the entire data directory.
+	 可能有一些我们已经写入的数据，打算进行fsync，但实际上还没有进行fsync。
+	 因此，在不久的将来发生电源故障可能会导致早期未刷新的写操作丢失，
+	 即使从这里开始写入磁盘的最新数据将被持久化。为了避免这种情况，fsync会同步整个数据目录。
+	 */
 
+	// 使用kill -9 可复现此场景.  ---->      pg_control
+	// Database cluster state:               in production
+	if (ControlFile->state != DB_SHUTDOWNED &&
+		ControlFile->state != DB_SHUTDOWNED_IN_RECOVERY)			
+	{
+		RemoveTempXlogFiles();
+		SyncDataDirectory();
+	}
+    
+    ...... // 省略若干部分
+}
+```
+
+首先，CurrentResourceOwner和AuxProcessResourceOwner这两个全局变量在StartupXLOG()函数的前面已经初始化了。
 
 
