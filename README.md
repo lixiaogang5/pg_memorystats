@@ -54,8 +54,14 @@ void StartupXLOG(void)
 ``` 
 在PostgreSQL v13.2版本中，该函数体大概有2K行。所以阅读起来是比较耗时的，因为该函数内部又调用了若干其他函数。
 
-![Uploading 9. StartupoXLOG()函数的作用.png…]()
+![9  StartupoXLOG()函数的作用](https://user-images.githubusercontent.com/63132178/181513115-d0c8b17c-a4f5-4012-a9b4-35d813cfc861.png)
 
+因此，将StartupXLOG()函数的内部实现分为若干篇文章来进行讲解。本文主要将解该函数中以下几个功能：
+（1）检查pg_control文件中的checkPoint内容是否有效；
+（2）打印pg_control文件中PostgreSQL数据库上一次关闭时的集群状态；
+（3）验证pg_wal/archive_status目录是否存在；
+（4）清理pg_wal目录下的一些临时WAL段；
+（5）fsync()同步整个数据目录（PGDATA路径下所有目录和文件）
 
 
 
