@@ -46,10 +46,15 @@ int main(int argc, char *argv[])
 
 
 # 2. 启动XLOG机制
-启动XLOG机制是由StartupXLOG()函数负责完成，该函数必须在postmaster（postgres）进程或独立后端进程启动期间执行一次。
+启动XLOG机制是由StartupXLOG()函数负责完成，该函数必须在postmaster（postgres）进程或独立后端进程启动期间执行一次。StartupXLOG()函数定义于xlog.c（ src/backend/access/transam/）中，其函数原型如下：
 
+``` c
+void StartupXLOG(void)
+{} 
+``` 
+在PostgreSQL v13.2版本中，该函数体大概有2K行。所以阅读起来是比较耗时的，因为该函数内部又调用了若干其他函数。
 
-
+![Uploading 9. StartupoXLOG()函数的作用.png…]()
 
 
 
