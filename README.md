@@ -247,7 +247,12 @@ typedef struct XLogPageHeaderData
 		((xlrp) % XLOG_BLCKSZ >= SizeOfXLogShortPHD)
 ```
 
+其中SizeOfXLogShortPHD是一个宏，其等价于MAXALIGN(sizeof(XLogPageHeaderData))，值为24字节，宏XLOG_BLCKSZ的大小是8192字节。因此若 ControlFile->checkPoint % 8192 >= 24，则表明该checkPoint内容是不正确的，从而结束postgres服务的启动。
+![image](https://user-images.githubusercontent.com/63132178/181519499-2a7f14a5-726e-4852-ab65-ed6dc4977972.png)
 
+若ControlFile->checkPoint的内容正确，则接着对postgres集群服务上一次关闭时候的状态进行日志打印提示。这部分功能如下：
+
+![image](https://user-images.githubusercontent.com/63132178/181520330-d2bff0f8-1ba9-4715-a124-21df50dc30a9.png)
 
 
 
