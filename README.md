@@ -101,10 +101,7 @@ StartupXLOG(void)
 		   CurrentResourceOwner == AuxProcessResourceOwner);
 	CurrentResourceOwner = AuxProcessResourceOwner;
 
-	/*
-	 * Check that contents look valid.
-	 检查内容是否有效。
-	 */
+	// 检查内容是否有效。
 	if (!XRecOffIsValid(ControlFile->checkPoint))
 		ereport(FATAL,
 				(errmsg("control file contains invalid checkpoint location")));
@@ -212,6 +209,58 @@ StartupXLOG(void)
 }
 ```
 
-首先，CurrentResourceOwner和AuxProcessResourceOwner这两个全局变量在StartupXLOG()函数的前面已经初始化了。
+首先，CurrentResourceOwner和AuxProcessResourceOwner这两个全局变量在StartupXLOG()函数的前面已经初始化了。由InitPostgres()函数内部的CreateAuxProcessResourceOwner()函数完成，该函数完成了这里两个资源初始化之后，才紧接着调用StartupXLOG()函数。
+
+![10](https://user-images.githubusercontent.com/63132178/181516202-28e65704-ed1e-423b-9f96-b2dd3d97fbd3.png)
+
+下面开始检查ControlFile->checkPoint变量值的内容是否正确。ControlFile是一个static的全局指针变量，该变量中的内容在PostmasterMain()函数中通过LocalProcessControlFile(false)负责初始化。它主要是通过读取PGDATA路径下global/目录下的pg_control文件初始化。所以在启动postgres之前，我们必须对该文件中的checkPoint的值的有效性进行判断处理，如果满足条件，则继续下面的执行；反之则结束任务。
+
+检查ControlFile->checkPoint内容的有效性由XRecOffIsValid()完成，它是一个宏，其定义如下：
+
+```c
+typedef struct XLogPageHeaderData
+{
+	uint16		xlp_magic;		/* magic value for correctness checks */
+	uint16		xlp_info;		/* flag bits, see below */
+	TimeLineID	xlp_tli;		/* TimeLineID of first record on page */
+	XLogRecPtr	xlp_pageaddr;	/* XLOG address of this page */
+
+	/*
+	 * When there is not enough space on current page for whole record, we
+	 * continue on the next page.  xlp_rem_len is the number of bytes
+	 * remaining from a previous page.
+	 *
+	 * Note that xlp_rem_len includes backup-block data; that is, it tracks
+	 * xl_tot_len not xl_len in the initial header.  Also note that the
+	 * continuation data isn't necessarily aligned.
+	 */
+	uint32		xlp_rem_len;	/* total len of remaining data for record */
+} XLogPageHeaderData;
+
+// SizeOfXLogShortPHD: 24
+#define SizeOfXLogShortPHD	MAXALIGN(sizeof(XLogPageHeaderData))
+
+#define XLOG_BLCKSZ 8192
+
+// 检查XLogRecPtr值是否在合理范围内
+#define XRecOffIsValid(xlrp) \
+		((xlrp) % XLOG_BLCKSZ >= SizeOfXLogShortPHD)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
