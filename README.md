@@ -36,7 +36,10 @@ int main(int argc, char *argv[])
 
 - （3） --single
 
-执行postgres时候，如果选项参数是“--single”，则走PostgresMain()分支，该分支也称为“单用户模式”。single模式通常会在以下场景中使用，（1）initdb节点，（2）多用户模式无法工作时，可使用单用户模式连接、登录数据库，（3）修复系统故障等。
+执行postgres时候，如果选项参数是“--single”，则走PostgresMain()分支，该分支也称为“单用户模式”。single模式通常会在以下场景中使用：
+（1）initdb节点  
+（2）多用户模式无法工作时，可使用单用户模式连接、登录数据库  
+（3）修复系统故障等。  
 
 - （4）此模式就是通常默认的开启postgres服务的逻辑分支PostmasterMain（）。
 ![image](https://user-images.githubusercontent.com/63132178/181463082-4b593add-8f21-4dff-bc92-20401e5b2660.png)
