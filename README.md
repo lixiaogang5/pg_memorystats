@@ -254,9 +254,78 @@ typedef struct XLogPageHeaderData
 
 ![image](https://user-images.githubusercontent.com/63132178/181520330-d2bff0f8-1ba9-4715-a124-21df50dc30a9.png)
 
+其对应的代码如下：  
+```c
+switch (ControlFile->state)
+	{
+		case DB_SHUTDOWNED:
 
+			/*
+			 * This is the expected case, so don't be chatty in standalone
+			 * mode
+			 */
+			ereport(IsPostmasterEnvironment ? LOG : NOTICE,
+					(errmsg("database system was shut down at %s",
+							str_time(ControlFile->time))));
+			break;
 
+		case DB_SHUTDOWNED_IN_RECOVERY:
+			ereport(LOG,
+					(errmsg("database system was shut down in recovery at %s",
+							str_time(ControlFile->time))));
+			break;
 
+		case DB_SHUTDOWNING:
+			ereport(LOG,
+					(errmsg("database system shutdown was interrupted; last known up at %s",
+							str_time(ControlFile->time))));
+			break;
+
+		case DB_IN_CRASH_RECOVERY:
+			ereport(LOG,
+					(errmsg("database system was interrupted while in recovery at %s",
+							str_time(ControlFile->time)),
+					 errhint("This probably means that some data is corrupted and"
+							 " you will have to use the last backup for recovery.")));
+			break;
+
+		case DB_IN_ARCHIVE_RECOVERY:
+			ereport(LOG,
+					(errmsg("database system was interrupted while in recovery at log time %s",
+							str_time(ControlFile->checkPointCopy.time)),
+					 errhint("If this has occurred more than once some data might be corrupted"
+							 " and you might need to choose an earlier recovery target.")));
+			break;
+
+		case DB_IN_PRODUCTION:
+			ereport(LOG,
+					(errmsg("database system was interrupted; last known up at %s",
+							str_time(ControlFile->time))));
+			break;
+
+		default:
+			ereport(FATAL,
+					(errmsg("control file contains invalid database cluster state")));
+	}
+```
+ControlFile->state中state成员是一个DBState枚举类型，其声明如下：
+```c
+/*
+ * System status indicator.  Note this is stored in pg_control; if you change
+ * it, you must bump PG_CONTROL_VERSION
+ */
+typedef enum DBState
+{
+	DB_STARTUP = 0,
+	DB_SHUTDOWNED,
+	DB_SHUTDOWNED_IN_RECOVERY,
+	DB_SHUTDOWNING,
+	DB_IN_CRASH_RECOVERY,
+	DB_IN_ARCHIVE_RECOVERY,
+	DB_IN_PRODUCTION
+} DBState;
+```
+关于DBState枚举类型，在
 
 
 
