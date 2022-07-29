@@ -164,35 +164,12 @@ StartupXLOG(void)
 		pg_usleep(60000000L);
 #endif
 
-	/*
-	 * 3. 请验证pg_wal和pg_wal/archive_status是否存在。如果有人为PITR执行了复制，
+	/* 3. 请验证pg_wal和pg_wal/archive_status是否存在。如果有人为PITR执行了复制，
 	 *    这些目录可能已被排除，需要重新创建。
 	 */
 	ValidateXLOGDirectoryStructure();
 
-
-
-	/*----------
-	 * If we previously crashed, perform a couple of actions:
-	 如果我们之前崩溃了，执行以下几个动作:
-	 *
-	 * - The pg_wal directory may still include some temporary WAL segments
-	 *   used when creating a new segment, so perform some clean up to not
-	 *   bloat this path.  This is done first as there is no point to sync
-	 *   this temporary data.
-	 pg_wal目录可能仍然包含一些创建新段时使用的临时WAL段，因此执行一些清理操作以避免该路径膨胀。
-	 首先执行这个操作，因为没有必要同步此临时数据。
-	 *
-	 * - There might be data which we had written, intending to fsync it, but
-	 *   which we had not actually fsync'd yet.  Therefore, a power failure in
-	 *   the near future might cause earlier unflushed writes to be lost, even
-	 *   though more recent data written to disk from here on would be
-	 *   persisted.  To avoid that, fsync the entire data directory.
-	 可能有一些我们已经写入的数据，打算进行fsync，但实际上还没有进行fsync。
-	 因此，在不久的将来发生电源故障可能会导致早期未刷新的写操作丢失，
-	 即使从这里开始写入磁盘的最新数据将被持久化。为了避免这种情况，fsync会同步整个数据目录。
-	 */
-
+	// 4. 如果上一次postgres服务奔溃，则需要依次执行下面两个函数
 	// 使用kill -9 可复现此场景.  ---->      pg_control
 	// Database cluster state:               in production
 	if (ControlFile->state != DB_SHUTDOWNED &&
@@ -402,12 +379,37 @@ ValidateXLOGDirectoryStructure(void)
 #define XLOGDIR				"pg_wal"
 #define XLOG_CONTROL_FILE	"global/pg_control"
 ```
+如果pg_wal目录不存在或者是pg_wal不是一个目录文件，则打印相关错误日志信息，并结束postgres进程的初始化流程。如果pg_wal存储且是一个目录文件，则继续对pg_wal目录下的archive_status目录文件进行判断，若该文件存在，但不是目录文件，则报错并结束postgres守护进程的初始化任务。反之，若archive_status目录文件不存在，则日志打印提示信息，并且postgres负责创建一个空的archive_status目录文件。可总结得出下面两点：  
+（1） 对于pg_wal文件，必须满足两个要求，首先它必须存在，其次，它还必须是一个目录文件；   
+（2） archive_status目录文件需满足的要求是：它可以不存在，若不存在，postgres进程会重新创建一个；但是若它存在，则它必须是目录文件，否则，postgres也会启动失败。
 
 
+## 2.4 判断postgres服务上一次的是否处于奔溃
+
+如果我们之前崩溃了，执行以下几个动作:      
+（1）pg_wal目录可能仍然包含一些创建新段时使用的临时WAL段，因此执行一些清理操作以避免该路径膨胀。 首先执行这个操作，因为没有必要同步此临时数据。     
+（2） 可能有一些我们已经写入的数据，打算进行fsync，但实际上还没有进行fsync。 因此，在不久的将来发生电源故障可能会导致早期未刷新的写操作丢失， 即使从这里开始写入磁盘的最新数据将被持久化。为了避免这种情况，fsync会同步整个数据目录。
+
+此部分的逻辑代码如下：
+```c
+// 4. 如果上一次postgres服务奔溃，则需要依次执行下面两个函数
+// 使用kill -9 可复现此场景.  ---->      pg_control
+// Database cluster state:               in production
+
+if (ControlFile->state 	!= DB_SHUTDOWNED &&
+    ControlFile->state 	!= DB_SHUTDOWNED_IN_RECOVERY)			
+{
+	RemoveTempXlogFiles();
+	SyncDataDirectory();
+}
+```
+若上一次postgres服务为正常停止、关闭，则位于pg_control文件中的state字段状态值为“shut down（DB_SHUTDOWNED）”，此情况下不会进入到if(){}语句的函数部分；反之若上一次的postgres为异常终止，比如postgres守护进程运行过程中，我在另外一个终端中通过kill -9 PID方式来kill掉postgres服务，那么pg_control文件中的state字段就不是DB_SHUTDOWNED状态，则会进入到if(){}的函数体中。然后依次执行RemoveTempXlogFiles()和SyncDataDirectory()函数。
 
 
+### 2.4.1 移除pg_wal下的临时WAL段
 
 
+### 2.4.2 fsync() PGDATA目录下的所有文件
 
 
 
