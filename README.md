@@ -405,6 +405,11 @@ if (ControlFile->state 	!= DB_SHUTDOWNED &&
 ```
 若上一次postgres服务为正常停止、关闭，则位于pg_control文件中的state字段状态值为“shut down（DB_SHUTDOWNED）”，此情况下不会进入到if(){}语句的函数部分；反之若上一次的postgres为异常终止，比如postgres守护进程运行过程中，我在另外一个终端中通过kill -9 PID方式来kill掉postgres服务，那么pg_control文件中的state字段就不是DB_SHUTDOWNED状态，则会进入到if(){}的函数体中。然后依次执行RemoveTempXlogFiles()和SyncDataDirectory()函数。
 
+如下图所示，左上方图1是postgres启动初始化过程；左下方图2通过kill -9 PID杀掉postgres进程，右上方图1是postgrs进程被kill掉后，通过pg_controldata程序得到的pg_control文件中集群的state，可以看到该状态是postgres被kill掉之前的集群状态，即in production。
+
+![image](https://user-images.githubusercontent.com/63132178/181693518-87e47f8d-dd53-4407-9ddf-1afe75efa75f.png)
+
+
 
 ### 2.4.1 移除pg_wal下的临时WAL段
  删除pg_wal中的所有临时日志文件，这在上次崩溃后的恢复开始时调用，此时没有其他进程写入新的WAL数据。该功能由函数RemoveTempXlogFiles()完成，其函数完整实现如下：
@@ -487,22 +492,128 @@ TryAgain:
 函数ReadDir()底层封装了readdir()函数。
 
 ### 2.4.2 fsync() PGDATA目录下的所有文件
+在PGDATA及其所有内容上递归发出fsync。我们对常规文件和目录进行fsync,无论它们在哪里，但我们只关注pg_wal和紧接在pg_tblspc下的符号链接。其他符号链接被假定指向我们不负责fsyncing的文件，并且可能根本没有写入权限。错误会被记录，但不会被认为是致命的;这是因为它仅在数据库启动期间使用，以处理数据目录中存在已发出但未同步的写入挂起的可能性。我们希望确保这样的写操作在新运行中执行的任何操作之前到达磁盘。但是，对于无害的情况(比如数据目录中的只读文件)，在出错时中止将导致启动失败，这也不好。
 
+注意，如果我们之前因为fsync()上的PANIC而崩溃，那么我们将在恢复期间再次重写所有更改。 注意，我们假设我们一开始就被chdir到PGDATA（这个在PostmasterMain()函数中读取pg_control文件的时候已经chdir到PGDATA下了）。
 
+这个过程由函数SyncDataDirectory()完成，其实现如下：
+```c
+void
+SyncDataDirectory(void)
+{
+	bool		xlog_is_symlink;
 
+	// 1. 如果fsync被禁用，我们可以跳过这整个过程。
+	if (!enableFsync)
+		return;
 
+	// 2. 如果pg_wal是一个符号链接，我们需要单独递归到它，因为下面的第一个walkdir将忽略它。
+	xlog_is_symlink = false;
 
+#ifndef WIN32
+	{
+		struct stat st;
+		
+		//lstat()系统函数打开一个符号链接文件
+		if (lstat("pg_wal", &st) < 0)
+			ereport(LOG,
+					(errcode_for_file_access(),
+					 errmsg("could not stat file \"%s\": %m",
+							"pg_wal")));
+		else if (S_ISLNK(st.st_mode))
+			xlog_is_symlink = true;
+	}
+#else
+	if (pgwin32_is_junction("pg_wal"))
+		xlog_is_symlink = true;
+#endif
 
+	// 3.  如果可能的话，向内核提示我们将很快对数据目录及其内容进行fsync。
+	//     这个步骤中的错误甚至比正常情况下更无趣，所以只在DEBUG1中记录它们。
+#ifdef PG_FLUSH_DATA_WORKS
+	walkdir(".", pre_sync_fname, false, DEBUG1);
+	if (xlog_is_symlink)
+		walkdir("pg_wal", pre_sync_fname, false, DEBUG1);
+	walkdir("pg_tblspc", pre_sync_fname, true, DEBUG1);
+#endif
+	
+	/* 4. 现在我们以相同的顺序执行fsync()。
+	 *    主调用忽略符号链接，因此，如果pg_wal是符号链接，除了特别处理它之外，
+	 *    还必须使用process_symlinks = true单独访问pg_tblspc。注意，如果pg_tblspc中有任何普通目录，
+	 *    它们将被fsync两次。这不是一个预期情况，所以我们不用担心优化。
+	 */
+	// 由于当前处于PGDATA路径下，执行“.”，则表示将PGDATA目录下的所有文件/目录（递归）进行fsync()
+	walkdir(".", datadir_fsync_fname, false, LOG);
+	if (xlog_is_symlink)
+		walkdir("pg_wal", datadir_fsync_fname, false, LOG);
+		
+	// 对pg_tblspc目录下的所有文件/目录执行fsync()
+	walkdir("pg_tblspc", datadir_fsync_fname, true, LOG);
+}
+```
+walkdir()函数中的第二个参数pre_sync_fname是一个函数指针，walkdir()的实现如下：
+```c
+static void
+walkdir(const char *path,
+		void (*action) (const char *fname, bool isdir, int elevel),
+		bool process_symlinks,
+		int elevel)
+{
+	DIR		   *dir;
+	struct dirent *de;
+	
+	// 打开指定的目录文件
+	dir = AllocateDir(path);
+	while ((de = ReadDirExtended(dir, path, elevel)) != NULL)
+	{
+		char		subpath[MAXPGPATH * 2];
+		struct stat fst;
+		int			sret;
 
+		CHECK_FOR_INTERRUPTS();		////
 
+		// 忽略“.”和“..”这两个特殊的目录
+		if (strcmp(de->d_name, ".") == 0 ||
+			strcmp(de->d_name, "..") == 0)
+			continue;
 
+		snprintf(subpath, sizeof(subpath), "%s/%s", path, de->d_name);
 
+		if (process_symlinks)
+			sret = stat(subpath, &fst);
+		else
+			sret = lstat(subpath, &fst);
 
+		if (sret < 0)
+		{
+			ereport(elevel,
+					(errcode_for_file_access(),
+					 errmsg("could not stat file \"%s\": %m", subpath)));
+			continue;
+		}
+		
+		// 如果是普通文件，则调用pre_sync_fname()函数，
+		if (S_ISREG(fst.st_mode))
+			(*action) (subpath, false, elevel);
+			
+		// 反之，若当前文件是一个目录，则递归遍历
+		else if (S_ISDIR(fst.st_mode))
+			walkdir(subpath, action, false, elevel);
+	}
 
+	FreeDir(dir);	/* we ignore any error here */
 
+	 // 对目标目录本身进行fsync是很重要的，因为单个文件fsync不能保证文件的目录条目是同步的。
+	 // 但是，如果AllocateDir失败，则跳过此操作;action函数对此可能并不稳健。
+	if (dir)
+		(*action) (path, true, elevel);
+}
 
+```
+函数Walkdir()的作用是递归遍历一个目录，将该操作应用到每个常规文件和目录(包括已命名目录本身)。如果process_symlinks为真，则动作和递归也应用于给定目录中符号链接指向的普通文件和目录；否则将忽略符号链接。符号链接在子目录中总是被忽略的，即我们故意不将process_symlinks标志传递给递归调用。错误报告级别为elevel，可能是ERROR或更少。
+函数pre_sync_fname()的作用是打开该文件，得到文件对应的文件句柄fd，然后再该函数内部通过间接调用pg_flush_data()函数，从而把这个文件句柄fd对应的数据全部刷新到磁盘上面。
 
-
+# 3. 总结
 
 
 
