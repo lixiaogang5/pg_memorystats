@@ -614,8 +614,7 @@ walkdir(const char *path,
 函数pre_sync_fname()的作用是打开该文件，得到文件对应的文件句柄fd，然后再该函数内部通过间接调用pg_flush_data()函数，从而把这个文件句柄fd对应的数据全部刷新到磁盘上面。
 
 # 3. 总结
-
-
+本文详细讲解了postgres服务启动的大致流程，同时也对XLOG的启动机制进行了大致的描述，比如会对pg_control文件中的checkPoint、state等字段值进行判断、校验，然后又对pg_wal文件和archive_status目录文件进行判断，从而决定下一步的操作。后面又提到了如果上一次的postgres进程是非正常手段关机，则本次的postgres服务启动将会执行系列的初始化操作，比如删除pg_wal目录下的所有临时文件，fsync() PGDATA目录下的所有文件，将其刷到磁盘持久化存储。
 
 
 
