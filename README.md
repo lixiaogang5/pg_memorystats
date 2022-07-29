@@ -95,13 +95,13 @@ StartupXLOG(void)
 	bool		fast_promoted = false;
 	struct stat st;
 
-	// 我们应该有一个辅助进程资源所有者来使用，并且我们不应该处于安装了其他资源所有者的事务中。
+	// 1. 我们应该有一个辅助进程资源所有者来使用，并且我们不应该处于安装了其他资源所有者的事务中。
 	Assert(AuxProcessResourceOwner != NULL);
 	Assert(CurrentResourceOwner == NULL ||
 		   CurrentResourceOwner == AuxProcessResourceOwner);
 	CurrentResourceOwner = AuxProcessResourceOwner;
 
-	// 检查内容是否有效。
+	// 2. 检查内容是否有效。
 	if (!XRecOffIsValid(ControlFile->checkPoint))
 		ereport(FATAL,
 				(errmsg("control file contains invalid checkpoint location")));
@@ -165,11 +165,8 @@ StartupXLOG(void)
 #endif
 
 	/*
-	 * Verify that pg_wal and pg_wal/archive_status exist.  In cases where
-	 * someone has performed a copy for PITR, these directories may have been
-	 * excluded and need to be re-created.
-	 请验证pg_wal和pg_wal/archive_status是否存在。如果有人为PITR执行了复制，
-	 这些目录可能已被排除，需要重新创建。
+	 * 3. 请验证pg_wal和pg_wal/archive_status是否存在。如果有人为PITR执行了复制，
+	 *    这些目录可能已被排除，需要重新创建。
 	 */
 	ValidateXLOGDirectoryStructure();
 
@@ -250,6 +247,7 @@ typedef struct XLogPageHeaderData
 其中SizeOfXLogShortPHD是一个宏，其等价于MAXALIGN(sizeof(XLogPageHeaderData))，值为24字节，宏XLOG_BLCKSZ的大小是8192字节。因此若 ControlFile->checkPoint % 8192 >= 24，则表明该checkPoint内容是不正确的，从而结束postgres服务的启动。
 ![image](https://user-images.githubusercontent.com/63132178/181519499-2a7f14a5-726e-4852-ab65-ed6dc4977972.png)
 
+## 2.2 日志打印上一次postgres集群的状态
 若ControlFile->checkPoint的内容正确，则接着对postgres集群服务上一次关闭时候的状态进行日志打印提示。这部分功能如下：
 
 ![image](https://user-images.githubusercontent.com/63132178/181520330-d2bff0f8-1ba9-4715-a124-21df50dc30a9.png)
@@ -325,7 +323,93 @@ typedef enum DBState
 	DB_IN_PRODUCTION
 } DBState;
 ```
-从pg_control文件中可以看到，postgres集群上一次停掉服务后的记录状态是DB_SHUTDOWNED
+从pg_control文件中可以看到，postgres集群上一次停掉服务后的记录状态是DB_SHUTDOWNED（对应shut down），这个枚举值与字符串直接的转换参考函数dbState()。
+
+```c
+tatic const char *
+dbState(DBState state)
+{
+	switch (state)
+	{
+		case DB_STARTUP:
+			return _("starting up");
+		case DB_SHUTDOWNED:
+			return _("shut down");
+		case DB_SHUTDOWNED_IN_RECOVERY:
+			return _("shut down in recovery");
+		case DB_SHUTDOWNING:
+			return _("shutting down");
+		case DB_IN_CRASH_RECOVERY:
+			return _("in crash recovery");
+		case DB_IN_ARCHIVE_RECOVERY:
+			return _("in archive recovery");
+		case DB_IN_PRODUCTION:
+			return _("in production");
+	}
+	return _("unrecognized status code");
+}
+```
+
+## 2.3 验证pg_wal/archive_status是否存在
+接下来就是去验证pg_wal和pg_wal/archive_status是否存在。如果有人为PITR执行了复制，这些目录可能已被排除，需要重新创建。pg_wal目录位于PGDATA路径下，而archive_status则位于pg_wal目录中。
+![image](https://user-images.githubusercontent.com/63132178/181677875-78908c45-20b6-4847-ac0c-e8da25ef41c4.png)
+
+此部分内容主要是由函数ValidateXLOGDirectoryStructure()负责。该函数的实现如下所示：
+```c
+static void
+ValidateXLOGDirectoryStructure(void)
+{
+	char		path[MAXPGPATH];
+	struct stat stat_buf;
+
+	// 检查pg_wal;如果不存在，则出错
+	if (stat(XLOGDIR, &stat_buf) != 0 ||
+		!S_ISDIR(stat_buf.st_mode))
+		ereport(FATAL,
+				(errmsg("required WAL directory \"%s\" does not exist",
+						XLOGDIR)));
+
+	/* Check for archive_status */
+	snprintf(path, MAXPGPATH, XLOGDIR "/archive_status");
+	if (stat(path, &stat_buf) == 0)
+	{
+		/* Check for weird cases where it exists but isn't a directory */
+		if (!S_ISDIR(stat_buf.st_mode))
+			ereport(FATAL,
+					(errmsg("required WAL directory \"%s\" does not exist",
+							path)));
+	}
+	else
+	{
+		ereport(LOG,
+				(errmsg("creating missing WAL directory \"%s\"", path)));
+		if (MakePGDirectory(path) < 0)
+			ereport(FATAL,
+					(errmsg("could not create missing directory \"%s\": %m",
+							path)));
+	}
+}
+
+```
+
+校验pg_wal和pg_wal/archive_status是否存在。如果后者不存在，则重新创建它。这个函数的目标不是验证这些目录的内容，而是在有人出于PITR目的执行了集群复制，但从复制中省略了pg_wal的情况下提供帮助。如果pg_wal不存在，我们也可以重新创建它，但我们经过深思熟虑后决定不创建。pg_wal作为符号链接是很常见的，如果这是DBA的意图，那么自动创建普通目录将导致性能下降，而不会引起注意
+
+该函数实现中，XLOGDIR是一个宏，其值为“pg_wal”，该宏声明于xlog_internal.h头文件中。
+```c
+/*
+ * The XLog directory and control file (relative to $PGDATA)
+ */
+#define XLOGDIR				"pg_wal"
+#define XLOG_CONTROL_FILE	"global/pg_control"
+```
+
+
+
+
+
+
+
+
 
 
 
