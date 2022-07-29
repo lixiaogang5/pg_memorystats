@@ -325,7 +325,7 @@ typedef enum DBState
 	DB_IN_PRODUCTION
 } DBState;
 ```
-关于DBState枚举类型，在
+从pg_control文件中可以看到，postgres集群上一次停掉服务后的记录状态是DB_SHUTDOWNED
 
 
 
