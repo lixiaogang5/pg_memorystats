@@ -407,9 +407,94 @@ if (ControlFile->state 	!= DB_SHUTDOWNED &&
 
 
 ### 2.4.1 移除pg_wal下的临时WAL段
+ 删除pg_wal中的所有临时日志文件，这在上次崩溃后的恢复开始时调用，此时没有其他进程写入新的WAL数据。该功能由函数RemoveTempXlogFiles()完成，其函数完整实现如下：
+ ```c
+ static void
+RemoveTempXlogFiles(void)
+{
+	DIR		   *xldir;
+	struct dirent 	   *xlde;
 
+	elog(DEBUG2, "removing all temporary WAL segments");
+
+	// 指定要打开的目录（XLOGDIR = “pg_wal”）， AllocateDir()函数底层封装了opendir()系统函数
+	xldir = AllocateDir(XLOGDIR);
+	// 循环读取pg_wal目录下的所有文件（包括目录），凡是以xlogtemp.开头的文件都表示临时文件，都将一一删除
+	while ((xlde = ReadDir(xldir, XLOGDIR)) != NULL)
+	{
+		char		path[MAXPGPATH];
+
+		if (strncmp(xlde->d_name, "xlogtemp.", 9) != 0)
+			continue;
+		// 在读取pg_control文件时候，已经chdir()到PGDATA， 这里拼接临时文件的绝对路径.
+		snprintf(path, MAXPGPATH, XLOGDIR "/%s", xlde->d_name);
+		// 调用unlink()系统函数删除该文件.
+		unlink(path);
+		// 日志打印已移除的文件
+		elog(DEBUG2, "removed temporary WAL segment \"%s\"", path);
+	}
+	FreeDir(xldir);
+}
+ ```
+函数AllocateDir()底层封装了opendir()系统函数，如下：
+```c
+DIR *
+AllocateDir(const char *dirname)
+{
+	DIR		   *dir;
+
+	DO_DB(elog(LOG, "AllocateDir: Allocated %d (%s)",
+			   numAllocatedDescs, dirname));
+
+	/* Can we allocate another non-virtual FD? */
+	if (!reserveAllocatedDesc())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				 errmsg("exceeded maxAllocatedDescs (%d) while trying to open directory \"%s\"",
+						maxAllocatedDescs, dirname)));
+
+	/* Close excess kernel FDs. */
+	ReleaseLruFiles();
+
+TryAgain:
+	if ((dir = opendir(dirname)) != NULL)
+	{
+		AllocateDesc *desc = &allocatedDescs[numAllocatedDescs];
+
+		desc->kind 			= AllocateDescDir;
+		desc->desc.dir 		= dir;
+		desc->create_subid 	= GetCurrentSubTransactionId();
+		numAllocatedDescs++;
+		return desc->desc.dir;
+	}
+
+	if (errno == EMFILE || errno == ENFILE)
+	{
+		int			save_errno = errno;
+
+		ereport(LOG,
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				 errmsg("out of file descriptors: %m; release and retry")));
+		errno = 0;
+		if (ReleaseLruFile())
+			goto TryAgain;
+		errno = save_errno;
+	}
+
+	return NULL;
+}
+```
+函数ReadDir()底层封装了readdir()函数。
 
 ### 2.4.2 fsync() PGDATA目录下的所有文件
+
+
+
+
+
+
+
+
 
 
 
