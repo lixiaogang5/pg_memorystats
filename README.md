@@ -85,9 +85,22 @@ PostgresPollingStatusType PQconnectPoll(PGconn *conn);
 这两个功能用于打开与数据库服务器的连接，以使您的应用程序执行线程在执行此操作时不会在远程I/O上被阻止。这种方法的重点是，等待I/O完成可以在应用程序的主循环中进行，而不是在内部进行 PQconnectdb()，因此应用程序可以与其他活动并行地管理此操作。  
 
 使用从字符串conninfo中获取的参数进行数据库连接，该参数传递给PQconnectStart()。该字符串的格式与上面针对PQconnectdb()所述的格式相同。  
-PQconnectStart和PQconnectPoll都不会阻塞，只要满足一定数量的限制:  
-I. 使用hostaddr和host参数可以确保不进行名称和反向名称查询。有关详细信息，请参见上面PQconnectdb()下这些参数的文档。
-II. 如果调用PQtrace，请确保跟踪到的流对象不会阻塞。  
-III. 在调用PQconnectPoll()之前，请确保套接字处于合适的状态，如下所述。  
+PQconnectStart和PQconnectPoll都不会阻塞，只要满足一定数量的限制:   
+ 使用hostaddr和host参数可以确保不进行名称和反向名称查询。有关详细信息，请参见上面PQconnectdb()下这些参数的文档。  
+ 如果调用PQtrace，请确保跟踪到的流对象不会阻塞。   
+ 在调用PQconnectPoll()之前，请确保套接字处于合适的状态，如下所述。   
 
+
+- 本程序的主要内容。
+
+- 调用接口 align_api.py
+    - predict 用于生成预测结果
+        - 输入文件
+        - 输出文件
+
+    - content_align
+        - 用于字段
+
+    - sample_api
+        - 用于任意词
 
