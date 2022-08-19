@@ -49,7 +49,7 @@ PGconn *PQconnectdb(const char *conninfo)
 
 如下图所示：
 
-![3  PQconnectdb()函数的公认参数关键字](https://user-images.githubusercontent.com/63132178/185537883-1455d535-230b-45f0-a5f8-64b19f2aed46.png)
+![3  PQconnectdb()函数的公认参数关键字](https://user-images.githubusercontent.com/63132178/185537883-1455d535-230b-45f0-a5f8-64b19f2aed46.png)  
 除了上面列出的几个常用连接参数关键字之外，还有：sslmode、requiressl、service、krbsrvname、authtype、connect_timeout、keepalives_interval等共几十个连接选项参数，剩下的会在后面介绍PQconnectdb()函数的时候进行详细介绍。
 
 
