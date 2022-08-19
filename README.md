@@ -50,7 +50,37 @@ PGconn *PQconnectdb(const char *conninfo)
 如下图所示：
 
 ![3  PQconnectdb()函数的公认参数关键字](https://user-images.githubusercontent.com/63132178/185537883-1455d535-230b-45f0-a5f8-64b19f2aed46.png)  
-除了上面列出的几个常用连接参数关键字之外，还有：sslmode、requiressl、service、krbsrvname、authtype、connect_timeout、keepalives_interval等共几十个连接选项参数，剩下的会在后面介绍PQconnectdb()函数的时候进行详细介绍。
+除了上面列出的几个常用连接参数关键字之外，还有：sslmode、requiressl、service、krbsrvname、authtype、connect_timeout、keepalives_interval等共几十个连接选项参数，剩下的会在后面介绍PQconnectdb()函数的时候进行详细介绍。   
+
+如果未指定任何参数，则检查相应的环境变量（参见“环境变量”一节）。如果环境变量也未设置，则使用硬连接默认值。返回值是指向表示后端连接的抽象结构的指针。
 
 
+## 2.2 PQsetdbLogin()  
+建立与数据库服务器的新连接。其函数原型如下：
+```c
+PGconn *PQsetdbLogin(const char *pghost, const char *pgport,
+							const char *pgoptions, const char *pgtty,
+							const char *dbName,
+							const char *login, const char *pwd);
+```
 
+这是具有固定数量的参数但功能相同的PQconnectdb的前身。 
+
+##2.3 PQsetdb()   
+建立与数据库服务器的新连接。其函数原型如下：   
+
+```c
+#define PQsetdb(M_PGHOST,M_PGPORT,M_PGOPT,M_PGTTY,M_DBNAME)  \
+	PQsetdbLogin(M_PGHOST, M_PGPORT, M_PGOPT, M_PGTTY, M_DBNAME, NULL, NULL)
+```
+这是一个PQsetdbLogin()使用null指针调用login和pwd参数的宏。提供它是为了与非常老的程序向后兼容。  
+
+## 2.4 PQconnectStart()和PQconnectPoll()  
+以非阻塞方式建立与数据库服务器的连接。  这两个函数的原型如下：  
+```c
+PGconn *PQconnectStart(const char *conninfo);
+PostgresPollingStatusType PQconnectPoll(PGconn *conn);
+```
+
+这两个例程用于打开与数据库服务器的连接，以便在执行此操作时，不会在远程I / O上阻止应用程序的执行线程。   
+使用从字符串conninfo中获取的参数进行数据库连接，该参数 传递给PQconnectStart。该字符串的格式与上面针对PQconnectdb所述的格式相同。只要满足许多限制，PQconnectStart和PQconnectPoll都不会阻塞：
