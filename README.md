@@ -94,7 +94,25 @@ PostgresPollingStatusType PQconnectPoll(PGconn *conn);
 
 如果`PQconnectStart()`成功，下一阶段是轮询`libpq`，以便它可以继续连接序列。使用PQsocket(conn)获取数据库连接底层套接字的描述符。这样循环：如果`PQconnectPoll(conn)`最后返回`PGRES_POLLING_READING`，等待直到套接字准备读取(通过`select()`， `poll()`或类似的系统函数表示)。然后再次调用`PQconnectPoll(conn)`。相反，如果`PQconnectPoll(conn)`最后返回`pgres_polling_write`，等待套接字准备写入，然后再次调用PQconnectPoll(conn)。如果你还没有调用PQconnectPoll，即，刚刚调用`PQconnectStart()`，表现为它最后返回`PGRES_POLLING_WRITING`。继续这个循环，直到`PQconnectPoll(conn)`返回`PGRES_POLLING_FAILED`，表示连接过程失败，或者返回`PGRES_POLLING_OK`，表示连接已经成功建立。   
 
-在连接期间的任何时候，都可以通过调用`PQstatu()`来检查连接的状态。如果给出`CONNECTION_BAD`，则连接过程失败;如果它给出`CONNECTION_OK`，那么连接就准备好了。上述`PQconnectPoll()`的返回值同样可以检测到这两种状态。其他状态也可能发生在(且仅发生在)异步连接过程中。这些指示连接过程的当前阶段，例如，向用户提供反馈可能是有用的。这些状态是：
+在连接期间的任何时候，都可以通过调用`PQstatu()`来检查连接的状态。如果给出`CONNECTION_BAD`，则连接过程失败;如果它给出`CONNECTION_OK`，那么连接就准备好了。上述`PQconnectPoll()`的返回值同样可以检测到这两种状态。其他状态也可能发生在(且仅发生在)异步连接过程中。这些指示连接过程的当前阶段，例如，向用户提供反馈可能是有用的。这些状态是：  
+
+- CONNECTION_STARTED  
+等待建立连接。  
+
+- CONNECTION_MADE  
+连接正常；等待发送  
+
+- CONNECTION_AWAITING_RESPONSE  
+等待服务器响应。  
+ 
+- CONNECTION_AUTH_OK  
+收到认证；等待后端启动完成。  
+
+- CONNECTION_SSL_STARTUP  
+协商SSL加密。  
+
+- CONNECTION_SETENV  
+协商环境驱动的参数设置。  
 
 
 
