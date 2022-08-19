@@ -85,22 +85,19 @@ PostgresPollingStatusType PQconnectPoll(PGconn *conn);
 这两个功能用于打开与数据库服务器的连接，以使您的应用程序执行线程在执行此操作时不会在远程I/O上被阻止。这种方法的重点是，等待I/O完成可以在应用程序的主循环中进行，而不是在内部进行 PQconnectdb()，因此应用程序可以与其他活动并行地管理此操作。  
 
 使用从字符串conninfo中获取的参数进行数据库连接，该参数传递给PQconnectStart()。该字符串的格式与上面针对PQconnectdb()所述的格式相同。  
-PQconnectStart和PQconnectPoll都不会阻塞，只要满足一定数量的限制:   
- 使用hostaddr和host参数可以确保不进行名称和反向名称查询。有关详细信息，请参见上面PQconnectdb()下这些参数的文档。  
- 如果调用PQtrace，请确保跟踪到的流对象不会阻塞。   
- 在调用PQconnectPoll()之前，请确保套接字处于合适的状态，如下所述。   
+- PQconnectStart和PQconnectPoll都不会阻塞，只要满足一定数量的限制:   
+    - 使用hostaddr和host参数可以确保不进行名称和反向名称查询。有关详细信息，请参见上面PQconnectdb()下这些参数的文档。  
+    - 如果调用PQtrace，请确保跟踪到的流对象不会阻塞。   
+    - 在调用PQconnectPoll()之前，请确保套接字处于合适的状态，如下所述。   
+
+要开始非阻塞连接请求，请调用`conn = PQconnectStart("connection_info_string")`。如果conn为null，则libpq无法分配新的PGconn 结构。否则，将返回有效的PGconn指针（尽管尚未表示与数据库的有效连接）。从PQconnectStart()返回时，调用status = PQstatus(conn)。如果status等于CONNECTION_BAD，则PQconnectStart()失败。  
+
+如果PQconnectStart成功，下一阶段是轮询libpq，以便它可以继续连接序列。使用PQsocket(conn)获取数据库连接底层套接字的描述符。这样循环：如果PQconnectPoll(conn)最后返回PGRES_POLLING_READING，等待直到套接字准备读取(通过select()， poll()或类似的系统函数表示)。然后再次调用PQconnectPoll(conn)。相反，如果PQconnectPoll(conn)最后返回pgres_polling_write，等待套接字准备写入，然后再次调用PQconnectPoll(conn)。如果你还没有调用PQconnectPoll，即，刚刚调用PQconnectStart，表现为它最后返回PGRES_POLLING_WRITING。继续这个循环，直到PQconnectPoll(conn)返回PGRES_POLLING_FAILED，表示连接过程失败，或者返回PGRES_POLLING_OK，表示连接已经成功建立。   
+
+在连接期间的任何时候，都可以通过调用PQstatu()来检查连接的状态。如果给出CONNECTION_BAD，则连接过程失败;如果它给出CONNECTION_OK，那么连接就准备好了。上述PQconnectPoll()的返回值同样可以检测到这两种状态。其他状态也可能发生在(且仅发生在)异步连接过程中。这些指示连接过程的当前阶段，例如，向用户提供反馈可能是有用的。这些状态是：
 
 
-- 本程序的主要内容。
 
-- 调用接口 align_api.py
-    - predict 用于生成预测结果
-        - 输入文件
-        - 输出文件
 
-    - content_align
-        - 用于字段
 
-    - sample_api
-        - 用于任意词
 
